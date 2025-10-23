@@ -5,7 +5,7 @@ Frontend (static HTML/JS) + Backend (FastAPI). Runs entirely in GitHub Codespace
 
 ---
 
-## ✨ Features (what evaluators will see)
+## ✨ Features
 - 🎤 **STT**: browser mic → `/stt` (Whisper via `faster-whisper`) or stub; English-first.
 - 🧠 **LLM**: `/chat` uses **Gemini** when `GOOGLE_API_KEY` is set; **automatic fallback** to rule-based when not.
 - 📝 **Memory**: SQLite remembers `name`, `email`, etc. per `session_id`.
