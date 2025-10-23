@@ -1,0 +1,15 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//speedchain//assignment//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:28580985-ad8f-4a81-9891-ac2ee1b6509d@speedchain
+DTSTAMP:20251023T154529Z
+DTSTART:20251024T103000Z
+DTEND:20251024T110000Z
+SUMMARY:Consultation with Dhruva
+DESCRIPTION:Booked via Speedchain demo. Join: https://meet.jit.si/speedchain-659e48ca
+LOCATION:https://meet.jit.si/speedchain-659e48ca
+END:VEVENT
+END:VCALENDAR

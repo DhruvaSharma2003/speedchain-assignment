@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Speedchain – Ping + STT + TTS + Chat + Schedule</title>
+  <style>
+    body { font-family: system-ui, Arial; max-width: 900px; margin: 40px auto; padding: 0 16px; }
+    input, button, textarea, select { padding: 10px; font-size: 15px; }
+    #result, #sttOut { white-space: pre-wrap; background:#111; color:#0f0; padding:12px; border-radius:8px; min-height: 60px; }
+    .row { margin: 16px 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .chat { border: 1px solid #ddd; border-radius: 10px; padding: 12px; max-height: 320px; overflow: auto; }
+    .msg { margin: 6px 0; }
+    .user { color: #0a58ca; }
+    .bot { color: #198754; }
+    .meta { color:#666; font-size: 12px; }
+    label { font-weight: 600; }
+    .col { display:flex; flex-direction:column; gap:8px; }
+    .card { border:1px solid #eee; border-radius:12px; padding:12px; }
+    a.button { padding:10px 14px; border:1px solid #ccc; border-radius:8px; text-decoration:none; display:inline-block; }
+  </style>
+</head>
+<body>
+  <h2>Frontend ↔ Backend check</h2>
+  <p>Paste your backend URL (port 8000), e.g. <code>https://xxxxx-8000.app.github.dev</code></p>
+  <input id="api" style="width:100%" placeholder="https://xxxxx-8000.app.github.dev" />
+  <div class="row">
+    <button id="ping">Ping /health</button>
+  </div>
+  <h3>Response</h3>
+  <div id="result">…</div>
+
+  <hr>
+
+  <h2>🧠 Chat (uses /chat memory)</h2>
+  <div class="row">
+    <label for="sid">Session ID:</label>
+    <input id="sid" value="demo-1" style="min-width: 200px" />
+    <label><input type="checkbox" id="autoSpeak" /> Auto-speak replies</label>
+  </div>
+  <div class="row">
+    <input id="chatIn" style="flex:1" placeholder="Say hi or tell me your name (e.g., 'my name is Dhruva Sharma')" />
+    <button id="sendChat">Send to /chat</button>
+  </div>
+  <div class="chat" id="chatLog">
+    <div class="meta">Chat history will appear here…</div>
+  </div>
+  <audio id="ttsAudio" controls style="width:100%; margin-top:12px;"></audio>
+
+  <hr>
+
+  <h2>🎤 STT Demo (mic → /stt)</h2>
+  <p>Record a short clip, then send to backend STT. The transcript will auto-fill the chat input.</p>
+  <div class="row">
+    <button id="recStart">Start Recording</button>
+    <button id="recStop" disabled>Stop</button>
+    <button id="sendStt" disabled>Send to /stt</button>
+  </div>
+  <audio id="playback" controls style="width:100%"></audio>
+  <h3>STT Result</h3>
+  <div id="sttOut">…</div>
+
+  <hr>
+
+  <h2>📅 Schedule (creates .ics + Meet link)</h2>
+  <div class="card">
+    <div class="row">
+      <div class="col" style="flex:2">
+        <label>Title</label>
+        <input id="schTitle" placeholder="Consultation" />
+      </div>
+      <div class="col">
+        <label>Date (YYYY-MM-DD)</label>
+        <input id="schDate" placeholder="2025-10-24" />
+      </div>
+      <div class="col">
+        <label>Time (HH:MM 24h)</label>
+        <input id="schTime" placeholder="16:00" />
+      </div>
+      <div class="col">
+        <label>Duration (min)</label>
+        <input id="schDur" type="number" value="30" />
+      </div>
+      <div class="col">
+        <label>Timezone</label>
+        <select id="schTz">
+          <option>Asia/Kolkata</option>
+          <option>UTC</option>
+          <option>America/New_York</option>
+          <option>Europe/London</option>
+          <option>Asia/Singapore</option>
+        </select>
+      </div>
+      <div class="col" style="flex:2">
+        <label>Email (optional)</label>
+        <input id="schEmail" placeholder="name@example.com" />
+      </div>
+    </div>
+    <div class="row">
+      <button id="fillFromChat">Use chat info</button>
+      <button id="createInvite">Create invite</button>
+      <a id="downloadIcs" class="button" href="#" target="_blank" style="display:none">Download .ics</a>
+      <a id="openMeet" class="button" href="#" target="_blank" style="display:none">Open Meet link</a>
+    </div>
+    <div id="schResult" class="meta">No invite yet.</div>
+  </div>
+
+  <hr>
+
+  <h2>🗣️ TTS Demo (manual text → /tts)</h2>
+  <textarea id="ttsText" rows="3" style="width:100%" placeholder="Hello from Speedchain!"></textarea>
+  <div class="row">
+    <button id="speak">Speak</button>
+  </div>
+
+  <script>
+    const $api = document.getElementById('api');
+    const baseUrl = () => $api.value.replace(/\/+$/, "");
+    let lastEntities = {};  // <-- will keep name/email from /chat
+
+    // ---- Ping /health ----
+    document.getElementById('ping').onclick = async () => {
+      const out = document.getElementById('result');
+      out.textContent = "Calling " + baseUrl() + "/health …";
+      try {
+        const r = await fetch(baseUrl() + "/health");
+        const j = await r.json();
+        out.textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        out.textContent = "Error: " + e.message;
+      }
+    };
+
+    // ---- Chat helpers ----
+    const $log = document.getElementById('chatLog');
+    function pushMsg(role, text) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + (role === 'user' ? 'user' : 'bot');
+      div.textContent = (role === 'user' ? 'You: ' : 'Bot: ') + text;
+      $log.appendChild(div);
+      $log.scrollTop = $log.scrollHeight;
+    }
+
+    async function speak(text) {
+      const $ttsAudio = document.getElementById('ttsAudio');
+      const r = await fetch(baseUrl() + "/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, lang: "en" })
+      });
+      const j = await r.json();
+      if (!j.audio_path) return;
+      $ttsAudio.src = baseUrl() + j.audio_path;
+      await $ttsAudio.play().catch(()=>{});
+    }
+
+    async function sendChat(text) {
+      const sid = document.getElementById('sid').value || "demo-1";
+      const r = await fetch(baseUrl() + "/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid, user_text: text })
+      });
+      const j = await r.json();
+      pushMsg('bot', j.text);
+      lastEntities = j.entities || {};
+      if (document.getElementById('autoSpeak').checked) {
+        await speak(j.text);
+      }
+    }
+
+    // ---- Chat UI ----
+    document.getElementById('sendChat').onclick = async () => {
+      const txt = document.getElementById('chatIn').value.trim();
+      if (!txt) return;
+      pushMsg('user', txt);
+      document.getElementById('chatIn').value = '';
+      await sendChat(txt);
+    };
+
+    // ---- Mic recording (STT) ----
+    let mediaRecorder, chunks = [], lastBlob = null;
+    const $start = document.getElementById('recStart');
+    const $stop = document.getElementById('recStop');
+    const $send = document.getElementById('sendStt');
+    const $audio = document.getElementById('playback');
+    const $sttOut = document.getElementById('sttOut');
+    const $chatIn = document.getElementById('chatIn');
+
+    $start.onclick = async () => {
+      chunks = [];
+      $sttOut.textContent = "Recording…";
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = e => chunks.push(e.data);
+      mediaRecorder.onstop = () => {
+        lastBlob = new Blob(chunks, { type: 'audio/webm' });
+        $audio.src = URL.createObjectURL(lastBlob);
+        $send.disabled = false;
+        $sttOut.textContent = "Recorded " + Math.round(lastBlob.size/1024) + " KB. Click 'Send to /stt'.";
+      };
+      mediaRecorder.start();
+      $start.disabled = true; $stop.disabled = false;
+    };
+
+    $stop.onclick = () => {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+        $stop.disabled = true; $start.disabled = false;
+      }
+    };
+
+    $send.onclick = async () => {
+      if (!lastBlob) return;
+      const fd = new FormData();
+      fd.append("file", lastBlob, "audio.webm");
+      $sttOut.textContent = "Uploading to " + baseUrl() + "/stt …";
+      try {
+        const r = await fetch(baseUrl() + "/stt", { method: "POST", body: fd });
+        const j = await r.json();
+        $sttOut.textContent = JSON.stringify(j, null, 2);
+        if (j.text) { $chatIn.value = j.text; }  // autofill chat input
+      } catch (e) {
+        $sttOut.textContent = "Error: " + e.message;
+      }
+    };
+
+    // ---- Manual TTS demo ----
+    document.getElementById('speak').onclick = async () => {
+      const text = document.getElementById('ttsText').value || "Hello from Speedchain!";
+      await speak(text);
+    };
+
+    // ---- Schedule form ----
+    document.getElementById('fillFromChat').onclick = () => {
+      const name = lastEntities.name || "";
+      const email = lastEntities.email || "";
+      if (name) document.getElementById('schTitle').value = `Consultation with ${name}`;
+      if (email) document.getElementById('schEmail').value = email;
+      document.getElementById('schResult').textContent = "Filled from chat memory.";
+    };
+
+    document.getElementById('createInvite').onclick = async () => {
+      const sid = document.getElementById('sid').value || "demo-1";
+      const payload = {
+        session_id: sid,
+        title: document.getElementById('schTitle').value || "Appointment",
+        date: document.getElementById('schDate').value,
+        time: document.getElementById('schTime').value,
+        duration_min: parseInt(document.getElementById('schDur').value || "30"),
+        timezone: document.getElementById('schTz').value,
+        email: document.getElementById('schEmail').value || ""
+      };
+      const $res = document.getElementById('schResult');
+      $res.textContent = "Creating invite…";
+      try {
+        const r = await fetch(baseUrl() + "/schedule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || "Unknown scheduling error");
+        const icsUrl = baseUrl() + j.ics_path;
+        const meetUrl = j.meet_link;
+        document.getElementById('downloadIcs').href = icsUrl;
+        document.getElementById('downloadIcs').style.display = 'inline-block';
+        document.getElementById('openMeet').href = meetUrl;
+        document.getElementById('openMeet').style.display = 'inline-block';
+        $res.textContent = `Invite ready. ${j.start_local} → ${j.end_local} (${j.timezone})`;
+      } catch (e) {
+        $res.textContent = "Schedule error: " + e.message;
+      }
+    };
+  </script>
+</body>
+</html>
