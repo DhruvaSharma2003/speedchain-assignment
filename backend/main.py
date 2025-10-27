@@ -116,6 +116,35 @@ def _resp_to_text(resp) -> str | None:
         pass
     return None
 
+import re
+
+def _extract_json_block(s: str) -> str | None:
+    """
+    Try to extract the first top-level {...} JSON block from text that may contain
+    extra prose or code fences.
+    """
+    if not s:
+        return None
+    # Quick path: already looks like clean JSON
+    s_strip = s.strip()
+    if s_strip.startswith("{") and s_strip.endswith("}"):
+        return s_strip
+
+    # Otherwise scan for a balanced top-level JSON object
+    start = s.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    for i, ch in enumerate(s[start:], start=start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start:i+1]
+    return None
+
+
 def plan_with_gemini(user_text: str, entities: dict):
     """
     Ask Gemini to extract intent/slots and draft a reply (JSON).
@@ -126,13 +155,36 @@ def plan_with_gemini(user_text: str, entities: dict):
         return None
 
     system = (
-        "You are a concise scheduling assistant. "
-        "Always respond with a single compact JSON object ONLY, no extra words. "
-        "Schema:{\"intent\":\"smalltalk|inquire_service|schedule_appointment|reschedule|cancel\","
-        "\"slots\":{\"name\":\"\",\"email\":\"\",\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"},"
-        "\"reply\":\"short helpful reply\"}. "
-        "If a slot is unknown, use empty string."
+    "ROLE & PERSONA:\n"
+    "You are **Aura**, the friendly AI receptionist for the hair salon **Gloss & Glow**.\n"
+    "You must ALWAYS refer to yourself as Aura. Never say you don't have a name.\n"
+    "Tone: warm, concise, professional. Keep replies ≤ 25 words.\n\n"
+
+    "BUSINESS RULES:\n"
+    "- Hours: Monday–Saturday 10:00–19:00 (24h). Closed Sunday.\n"
+    "- Services & durations (minutes): haircut=30, coloring=90, styling=45, spa=60.\n"
+    "- Stylists & skills: Ava(haircut,styling), Maya(coloring), Liam(spa), Noah(haircut,coloring).\n"
+    "- If requested time is outside hours or conflicts, propose the nearest available slot.\n"
+    "- Ask for missing contact fields (name, email, phone) before finalizing a booking.\n\n"
+
+    "OUTPUT FORMAT (STRICT):\n"
+    "Return ONLY a single JSON object with exactly this schema and NOTHING else:\n"
+    "{\n"
+    '  "intent": "smalltalk|inquire_service|check_availability|schedule_appointment|reschedule|cancel",\n'
+    '  "slots": {\n'
+    '    "name": "", "email": "", "phone": "",\n'
+    '    "service": "haircut|coloring|styling|spa", "stylist": "",\n'
+    '    "date": "YYYY-MM-DD", "time": "HH:MM", "duration": "", "notes": ""\n'
+    "  },\n"
+    '  "reply": "short natural reply (≤ 25 words, from Aura)"\n'
+    "}\n\n"
+
+    "CONSTRAINTS:\n"
+    "- Unknown fields MUST be empty strings.\n"
+    "- Do NOT include markdown, code fences, or extra text outside the JSON.\n"
+    "- The reply must sound like Aura and follow the rules above.\n"
     )
+
 
     # Candidate list: prefer explicit env, else auto-discover, else a safe default
     candidates = []
@@ -180,7 +232,12 @@ def plan_with_gemini(user_text: str, entities: dict):
             raw = _resp_to_text(resp)
             if not raw:
                 raise ValueError("empty model response")
-            data = json.loads(raw)
+
+            json_str = _extract_json_block(raw)
+            if not json_str:
+                raise ValueError("no JSON object found in model response")
+            data = json.loads(json_str)
+
             if isinstance(data, dict) and "reply" in data:
                 data.setdefault("slots", {})
                 return data
@@ -427,18 +484,29 @@ def chat(body: ChatIn):
         plan = plan_with_gemini(body.user_text, ents)  # None if no key or error
 
         if plan is None:
-            # ---- fallback: simple rule-based NLU ----
+            # ---- fallback: simple rule-based NLU (still in Aura persona) ----
             slots = simple_nlu(body.user_text)
             for k, v in slots.items():
                 if k != "intent" and v:
                     upsert_entity(db, sess.id, k, v)
             ents = get_entities(db, sess.id)
             name = ents.get("name")
+
+            def _short(s: str) -> str:
+                # keep reply succinct (≤ ~25 words heuristic)
+                return " ".join(s.split())[:240]
+
             if "intent" in slots and slots["intent"] == "schedule_appointment":
-                reply = "Got it — you'd like to schedule an appointment. Share your preferred date, time, and email."
+                reply = _short(
+                    "I’m Aura from Gloss & Glow. Let’s book you in. "
+                    "Please share preferred service, date, time, and your email or phone."
+                )
             else:
-                reply = f"Hi {name}! How can I help you today?" if name \
-                        else "Hi! How can I help you today? (You can tell me your name with 'my name is …')"
+                if name:
+                    reply = _short(f"Hi {name}, I’m Aura at Gloss & Glow. How can I help today?")
+                else:
+                    reply = _short("Hi, I’m Aura at Gloss & Glow. How can I help today?")
+
         else:
             # ---- Gemini path: upsert extracted slots and use its reply ----
             for k, v in (plan.get("slots") or {}).items():
