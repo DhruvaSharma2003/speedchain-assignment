@@ -1,7 +1,7 @@
 # speedchain-assignment
 
 Voice AI receptionist: **STT → LLM (Gemini) → TTS**, plus **memory** and **scheduling (.ics + meet link)**.  
-Frontend (static HTML/JS) + Backend (FastAPI). Runs entirely in GitHub Codespaces.
+Frontend (Gradio) + Backend (FastAPI). Runs entirely in GitHub Codespaces.
 
 ---
 
